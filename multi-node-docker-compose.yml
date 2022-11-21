@@ -1,0 +1,216 @@
+version: '3.9'
+
+services:
+
+  setup:
+    image: elasticsearch:${STACK_VERSION}
+    container_name: setup
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs
+    user: "0"
+    command: >
+      bash -c '
+        if [ ! -f config/certs/ca.zip ]; then
+          echo "Creating CA";
+          bin/elasticsearch-certutil ca --silent --pem -out config/certs/ca.zip;
+          unzip config/certs/ca.zip -d config/certs;
+        fi;
+        if [ ! -f config/certs/certs.zip ]; then
+          echo "Creating certs";
+          echo -ne \
+          "instances:\n"\
+          "  - name: elasticsearch1\n"\
+          "    dns:\n"\
+          "      - elasticsearch1\n"\
+          "      - localhost\n"\
+          "    ip:\n"\
+          "      - 127.0.0.1\n"\
+          "  - name: elasticsearch2\n"\
+          "    dns:\n"\
+          "      - elasticsearch2\n"\
+          "      - localhost\n"\
+          "    ip:\n"\
+          "      - 127.0.0.1\n"\
+          > config/certs/instances.yml;
+          bin/elasticsearch-certutil cert --silent --pem -out config/certs/certs.zip --in config/certs/instances.yml --ca-cert config/certs/ca/ca.crt --ca-key config/certs/ca/ca.key;
+          unzip config/certs/certs.zip -d config/certs;
+        fi;
+        echo "Setting file permissions"
+        chown -R root:root config/certs;
+        find . -type d -exec chmod 750 \{\} \;;
+        find . -type f -exec chmod 640 \{\} \;;
+        echo "Waiting for Elasticsearch availability";
+        until curl -s --cacert config/certs/ca/ca.crt https://elasticsearch1:9200 | grep -q "missing authentication credentials"; do sleep 30; done;
+        echo "Setting kibana_system password";
+        until curl -s -X POST --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" https://elasticsearch1:9200/_security/user/kibana_system/_password -d "{\"password\":\"${KIBANA_PASSWORD}\"}"; do sleep 10; done;
+        echo "All done!";
+      '
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "[ -f config/certs/elasticsearch1/elasticsearch1.crt ]"
+        ]
+      interval: 1s
+      timeout: 5s
+      retries: 120
+
+  elasticsearch1:
+    image: elasticsearch:${STACK_VERSION}
+    container_name: elasticsearch1
+    depends_on:
+      setup:
+        condition: service_healthy
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs
+      - elasticsearch1:/usr/share/elasticsearch/data:z
+    ports:
+      - 9200:9200
+    environment:
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - node.name=elasticsearch1
+      - cluster.name=docker-cluster
+      - cluster.initial_master_nodes=elasticsearch1,elasticsearch2
+      - discovery.seed_hosts=elasticsearch2
+      - xpack.security.enabled=true
+      - xpack.license.self_generated.type=basic
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.key=certs/elasticsearch1/elasticsearch1.key
+      - xpack.security.http.ssl.certificate=certs/elasticsearch1/elasticsearch1.crt
+      - xpack.security.http.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.http.ssl.verification_mode=certificate
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.key=certs/elasticsearch1/elasticsearch1.key
+      - xpack.security.transport.ssl.certificate=certs/elasticsearch1/elasticsearch1.crt
+      - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.verification_mode=certificate
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s --cacert config/certs/ca/ca.crt https://localhost:9200 | grep -q 'missing authentication credentials'"
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  elasticsearch2:
+    image: elasticsearch:${STACK_VERSION}
+    container_name: elasticsearch2
+    depends_on:
+      - elasticsearch1
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs
+      - elasticsearch2:/usr/share/elasticsearch/data:z
+    environment:
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - node.name=elasticsearch2
+      - cluster.name=docker-cluster
+      - cluster.initial_master_nodes=elasticsearch1,elasticsearch2
+      - discovery.seed_hosts=elasticsearch1
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.key=certs/elasticsearch2/elasticsearch2.key
+      - xpack.security.http.ssl.certificate=certs/elasticsearch2/elasticsearch2.crt
+      - xpack.security.http.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.http.ssl.verification_mode=certificate
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.key=certs/elasticsearch2/elasticsearch2.key
+      - xpack.security.transport.ssl.certificate=certs/elasticsearch2/elasticsearch2.crt
+      - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.license.self_generated.type=basic
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s --cacert config/certs/ca/ca.crt https://localhost:9200 | grep -q 'missing authentication credentials'"
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  logstash:
+    image: logstash:${STACK_VERSION}
+    container_name: logstash
+    depends_on:
+      elasticsearch1:
+        condition: service_healthy
+      elasticsearch2:
+        condition: service_healthy
+    volumes:
+      - /var/log/GDPR/myapplication:/var/log/GDPR/myapplication:ro,Z
+      - certs:/usr/share/logstash/config/certs
+    ports:
+      - 5044:5044
+    environment:
+      - ES_JAVA_OPTS=-Xmx256m -Xms256m
+      - XPACK_MONITORING_ENABLED=false
+      - CONFIG_STRING=input { rabbitmq { host => "rabbitmq" port => 5672 vhost => "/" password => "password" user => "username" queue => "projectname.log" exchange => "projectname.log" key => "log.routing" exchange_type => "direct" type => "rabbitmq" durable => true codec => "json" } } filter { json { source => "message" } mutate { remove_field => ["@version", "type", "event", "@timestamp"] } } output { elasticsearch { ssl => "true" ssl_certificate_verification => "false" hosts => ["elasticsearch1:9200"] user => "elastic" password => "elastic_password" index => "%{domain}" action => "index" } }
+      - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
+
+  kibana:
+    image: kibana:${STACK_VERSION}
+    container_name: kibana
+    depends_on:
+      elasticsearch1:
+        condition: service_healthy
+      elasticsearch2:
+        condition: service_healthy
+    volumes:
+      - certs:/usr/share/kibana/config/certs
+      - kibanadata:/usr/share/kibana/data
+    ports:
+      - 5601:5601
+    environment:
+      - SERVERNAME=kibana
+      - ELASTICSEARCH_HOSTS=https://elasticsearch1:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+      - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - 5672:5672
+      - 15672:15672
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq/
+      - rabbitmq_log:/var/log/rabbitmq/
+    environment:
+      - RABBITMQ_DEFAULT_USER=username
+      - RABBITMQ_DEFAULT_PASS=password
+    restart: always
+
+volumes:
+  certs:
+    driver: local
+  elasticsearch1:
+    driver: local
+  elasticsearch2:
+    driver: local
+  kibanadata:
+    driver: local
+  rabbitmq_data:
+    driver: local
+  rabbitmq_log:
+    driver: local

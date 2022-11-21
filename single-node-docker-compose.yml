@@ -1,0 +1,71 @@
+version: '3.9'
+
+services:
+
+  elasticsearch:
+    image: elasticsearch:${STACK_VERSION}
+    container_name: elasticsearch
+    volumes:
+      - elasticsearch:/usr/share/elasticsearch/data:z
+    ports:
+      - 9200:9200
+      - 9300:9300
+    environment:
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=true
+      - ELASTIC_USER=${ELASTIC_USER:-}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
+      - network.publish.host=${ELASTIC_HOST:-}
+      - discovery.type=single-node
+  
+  logstash:
+    image: logstash:${STACK_VERSION}
+    container_name: logstash
+    depends_on:
+      - elasticsearch
+    volumes:
+      - /var/log/GDPR/myapplication:/var/log/GDPR/myapplication:Z
+    ports:
+      - 5044:5044
+    environment:
+      - ES_JAVA_OPTS=-Xmx256m -Xms256m
+      - xpack.monitoring.enabled=false
+      - CONFIG_STRING=input { rabbitmq { host => "rabbitmq" port => 5672 vhost => "/" password => "password" user => "username" queue => "projectname.log" exchange => "projectname.log" key => "info.routing" exchange_type => "direct" type => "rabbitmq" durable => true codec => "json" } } filter { json { source => "message" } mutate { remove_field => ["@version", "type", "event", "@timestamp"] } } output { elasticsearch { hosts => "elasticsearch:9200" user => "elastic" password => "elastic_password" index => "%{domain}" action => "index" } }
+
+  kibana:
+    image: kibana:${STACK_VERSION}
+    container_name: kibana
+    depends_on:
+      - elasticsearch
+    volumes:
+      - kibanadata:/usr/share/kibana/data:z
+    ports:
+      - 5601:5601
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=${ELASTIC_USER:-}
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD:-}
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq/
+      - rabbitmq_log:/var/log/rabbitmq/
+    ports:
+        - 5672:5672
+        - 15672:15672
+    environment:
+      - RABBITMQ_DEFAULT_USER=username
+      - RABBITMQ_DEFAULT_PASS=password
+    restart: always
+
+volumes:
+  elasticsearch:
+      driver: local
+  kibanadata:
+      driver: local
+  rabbitmq_data:
+      driver: local
+  rabbitmq_log:
+      driver: local
