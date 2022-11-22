@@ -154,7 +154,7 @@ services:
       - 5044:5044
     environment:
       - ES_JAVA_OPTS=-Xmx256m -Xms256m
-      - XPACK_MONITORING_ENABLED=false
+      - xpack.monitoring.enabled=false
       - CONFIG_STRING=input { rabbitmq { host => "rabbitmq" port => 5672 vhost => "/" password => "password" user => "username" queue => "projectname.log" exchange => "projectname.log" key => "log.routing" exchange_type => "direct" type => "rabbitmq" durable => true codec => "json" } } filter { json { source => "message" } mutate { remove_field => ["@version", "type", "event", "@timestamp"] } } output { elasticsearch { ssl => "true" ssl_certificate_verification => "false" hosts => ["elasticsearch1:9200"] user => "elastic" password => "elastic_password" index => "%{domain}" action => "index" } }
       - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
 
