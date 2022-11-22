@@ -55,10 +55,10 @@ services:
     ports:
         - 5672:5672
         - 15672:15672
+    restart: always
     environment:
       - RABBITMQ_DEFAULT_USER=username
       - RABBITMQ_DEFAULT_PASS=password
-    restart: always
 
 volumes:
   elasticsearch:
