@@ -196,10 +196,10 @@ services:
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
       - rabbitmq_log:/var/log/rabbitmq/
+    restart: always
     environment:
       - RABBITMQ_DEFAULT_USER=username
       - RABBITMQ_DEFAULT_PASS=password
-    restart: always
 
 volumes:
   certs:
