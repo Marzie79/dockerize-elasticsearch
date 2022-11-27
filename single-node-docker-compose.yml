@@ -2,9 +2,21 @@ version: '3.9'
 
 services:
 
+  setup:
+    image: elasticsearch:${STACK_VERSION}
+    container_name: setup
+    command: >
+      bash -c '
+        echo "Setting kibana_system password";
+        until curl -s -X POST -u "${ELASTIC_USER:-}:${ELASTIC_PASSWORD:-}" -H "Content-Type: application/json" http://elasticsearch:9200/_security/user/kibana_system/_password -d "{\"password\":\"${KIBANA_PASSWORD:-}\"}"; do sleep 10; done;
+        echo "All done!";
+      '
+
   elasticsearch:
     image: elasticsearch:${STACK_VERSION}
     container_name: elasticsearch
+    depends_on:
+      - setup
     volumes:
       - elasticsearch:/usr/share/elasticsearch/data:z
     ports:
@@ -15,14 +27,24 @@ services:
       - xpack.security.enabled=true
       - ELASTIC_USER=${ELASTIC_USER:-}
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
-      - network.publish.host=${ELASTIC_HOST:-}
+      - network.publish_host=${ELASTIC_HOST:-}
       - discovery.type=single-node
-  
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s http://localhost:9200 | grep -q 'missing authentication credentials'"
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
   logstash:
     image: logstash:${STACK_VERSION}
     container_name: logstash
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
     volumes:
       - /var/log/GDPR/myapplication:/var/log/GDPR/myapplication:Z
     ports:
@@ -30,21 +52,22 @@ services:
     environment:
       - ES_JAVA_OPTS=-Xmx256m -Xms256m
       - xpack.monitoring.enabled=false
-      - CONFIG_STRING=input { rabbitmq { host => "rabbitmq" port => 5672 vhost => "/" password => "password" user => "username" queue => "projectname.log" exchange => "projectname.log" key => "info.routing" exchange_type => "direct" type => "rabbitmq" durable => true codec => "json" } } filter { json { source => "message" } mutate { remove_field => ["@version", "type", "event", "@timestamp"] } } output { elasticsearch { hosts => "elasticsearch:9200" user => "elastic" password => "elastic_password" index => "%{domain}" action => "index" } }
+      - CONFIG_STRING=input { rabbitmq { host => "rabbitmq" port => 5672 vhost => "/" password => "password" user => "username" queue => "projectname.log.queue" exchange => "projectname.log.exchange" key => "projectname.log.routing" exchange_type => "direct" type => "rabbitmq" durable => true codec => "json" } } filter { json { source => "message" } mutate { remove_field => ["@version", "type", "event", "@timestamp"] } } output { elasticsearch { hosts => "elasticsearch:9200" user => "elastic" password => "elastic_password" index => "%{domain}" action => "index" } }
 
   kibana:
     image: kibana:${STACK_VERSION}
     container_name: kibana
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
     volumes:
       - kibanadata:/usr/share/kibana/data:z
     ports:
       - 5601:5601
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-      - ELASTICSEARCH_USERNAME=${ELASTIC_USER:-}
-      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD:-}
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD:-}
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -53,8 +76,8 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq/
       - rabbitmq_log:/var/log/rabbitmq/
     ports:
-        - 5672:5672
-        - 15672:15672
+      - 5672:5672
+      - 15672:15672
     restart: always
     environment:
       - RABBITMQ_DEFAULT_USER=username
@@ -62,10 +85,10 @@ services:
 
 volumes:
   elasticsearch:
-      driver: local
+    driver: local
   kibanadata:
-      driver: local
+    driver: local
   rabbitmq_data:
-      driver: local
+    driver: local
   rabbitmq_log:
-      driver: local
+    driver: local
