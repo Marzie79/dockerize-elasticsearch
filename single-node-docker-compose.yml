@@ -24,7 +24,6 @@ services:
       - 9300:9300
     environment:
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
-      - xpack.security.enabled=true
       - ELASTIC_USER=${ELASTIC_USER:-}
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-}
       - network.publish_host=${ELASTIC_HOST:-}
@@ -52,7 +51,7 @@ services:
     environment:
       - ES_JAVA_OPTS=-Xmx256m -Xms256m
       - xpack.monitoring.enabled=false
-      - CONFIG_STRING=input { rabbitmq { host => "rabbitmq" port => 5672 vhost => "/" password => "password" user => "username" queue => "projectname.log.queue" exchange => "projectname.log.exchange" key => "projectname.log.routing" exchange_type => "direct" type => "rabbitmq" durable => true codec => "json" } } filter { json { source => "message" } mutate { remove_field => ["@version", "type", "event", "@timestamp"] } } output { elasticsearch { hosts => "elasticsearch:9200" user => "elastic" password => "elastic_password" index => "%{domain}" action => "index" } }
+      - CONFIG_STRING=input { rabbitmq { host => "rabbitmq" port => 5672 vhost => "/" password => "${RABBIT_PASSWORD:-}" user => "${RABBIT_USER:-}" queue => "projectname.log.queue" exchange => "projectname.log" key => "projectname.log.routing" exchange_type => "direct" type => "rabbitmq" durable => true codec => "json" } } filter { json { source => "message" } mutate { remove_field => ["@version", "type", "event", "@timestamp"] } } output { elasticsearch { hosts => "elasticsearch:9200" user => "${ELASTIC_USER:-}" password => "${ELASTIC_PASSWORD:-}" index => "%{domain}" action => "index" } }
 
   kibana:
     image: kibana:${STACK_VERSION}
@@ -80,8 +79,8 @@ services:
       - 15672:15672
     restart: always
     environment:
-      - RABBITMQ_DEFAULT_USER=username
-      - RABBITMQ_DEFAULT_PASS=password
+      - RABBITMQ_DEFAULT_USER=${RABBIT_USER:-}
+      - RABBITMQ_DEFAULT_PASS=${RABBIT_PASSWORD:-}
 
 volumes:
   elasticsearch:
